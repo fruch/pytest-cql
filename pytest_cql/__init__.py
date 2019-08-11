@@ -3,6 +3,7 @@ from __future__ import print_function
 import os.path
 import tempfile
 from contextlib import contextmanager
+import shutil
 
 import pytest
 from _pytest.python import FunctionDefinition
@@ -28,16 +29,25 @@ def cql_session(node, **kwargs):
 def pytest_addoption(parser):
     parser.addoption("--scylla-version", help="run all combinations")
     parser.addoption("--scylla-directory", help="run all combinations")
+    parser.addoption(
+        "--keep-cluster",
+        action="store_true",
+        help="decide if to remove cluster directory",
+    )
 
 
 @pytest.fixture(scope="session")
-def test_path():
-    dtest_root = os.path.join(os.path.expanduser("~"), ".dtest")
+def test_path(request):
+    dtest_root = os.path.join(os.path.expanduser("~"), ".cql-test")
     if not os.path.exists(dtest_root):
         os.makedirs(dtest_root)
-    yield tempfile.mkdtemp(dir=dtest_root, prefix="dtest-")
+    temp_dir = tempfile.mkdtemp(dir=dtest_root, prefix="cql-test-")
 
-    # TODO: delete the directory if needed here
+    yield temp_dir
+
+    keep_cluster = request.config.getoption("--keep-cluster", False)
+    if not keep_cluster:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @pytest.fixture(scope="session")
@@ -70,13 +80,15 @@ def scylla_1_node_cluster(request, test_path):  # pylint: disable=redefined-oute
     _id = 2
     cluster.set_id(_id)
     cluster.set_ipprefix("127.0.%d." % _id)
-
+    cluster.set_configuration_options({"skip_wait_for_gossip_to_settle": 0})
     cluster.populate(1)
     cluster.start()
     yield cluster
 
     cluster.stop()
-    cluster.remove()
+    keep_cluster = request.config.getoption("--keep-cluster", False)
+    if not keep_cluster:
+        cluster.remove()
 
 
 @pytest.mark.usefixtures("scylla_1_node_cluster")
